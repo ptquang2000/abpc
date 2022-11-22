@@ -38,7 +38,7 @@ void init_tof() {
     status += VL53L1_WaitDeviceBooted(device.pdev);
     status += VL53L1_DataInit(device.pdev);
 	status += VL53L1_StaticInit(device.pdev);
-	status += VL53L1_SetDistanceMode(device.pdev, VL53L1_DISTANCEMODE_LONG);
+	status += VL53L1_SetDistanceMode(device.pdev, VL53L1_DISTANCEMODE_MEDIUM);
 	status += VL53L1_SetMeasurementTimingBudgetMicroSeconds(device.pdev, 20000);
 	status += VL53L1_SetInterMeasurementPeriodMilliSeconds(device.pdev, 24);
     ESP_ERROR_CHECK(status);
@@ -48,10 +48,10 @@ void init_tof() {
 
 void switch_next_roi(int16_t* o_distances) {
     static uint8_t roi_index = 0;
-    status = VL53L1_SetUserROI(device.pdev, &roi_config[roi_index]);
-    status = VL53L1_WaitMeasurementDataReady(device.pdev);
+    ESP_ERROR_CHECK(VL53L1_SetUserROI(device.pdev, &roi_config[roi_index]));
+    ESP_ERROR_CHECK(VL53L1_WaitMeasurementDataReady(device.pdev));
     if (!status) status = VL53L1_GetRangingMeasurementData(device.pdev, &device.measurement_data);
     o_distances[roi_index] = device.measurement_data.RangeMilliMeter;
-    VL53L1_ClearInterruptAndStartMeasurement(device.pdev);
+    ESP_ERROR_CHECK(VL53L1_ClearInterruptAndStartMeasurement(device.pdev));
     roi_index = roi_index == NUM_OF_CENTER - 1 ? 0 :  roi_index + 1;
 }

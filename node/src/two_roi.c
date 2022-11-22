@@ -14,15 +14,15 @@ static TaskHandle_t get_distance_handle = NULL;
 void setup_roi() {
     VL53L1_UserRoi_t config;
 
-    config.TopLeftX = 8;
+    config.TopLeftX = 0;
     config.TopLeftY = 15;
     config.BotRightX = 15;
-    config.BotRightY = 0;
+    config.BotRightY = 5;
     roi_config[0] = config;
 
-    config.TopLeftX = 4;
-    config.TopLeftY = 15;
-    config.BotRightX = 11;
+    config.TopLeftX = 0;
+    config.TopLeftY = 11;
+    config.BotRightX = 15;
     config.BotRightY = 0;
     roi_config[1] = config;
 }
