@@ -25,3 +25,19 @@ A publisher will public quantity message in 5 seconds, while a subscriber will r
 # cd to test/broker
 docker-compose -p test up --abort-on-container-exit
 ```
+
+## Gateway
+Build node with option `-DCONN_TYPE=WIFI` in file *platformio.ini*.
+
+Setup wifi config in *connector.h*.
+    
+- WIFI_SSID - wifi name
+- WIFI_PASSWORD - wifi password
+- SERVER_URL - host ip
+
+Then use command below to start broker and gateway:
+```bash
+# cd to test/gateway
+docker-compose -p gateway up
+```
+Published messages can be viewd at http://localhost:18083/ with topic `gateway`

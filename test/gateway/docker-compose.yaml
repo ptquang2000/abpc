@@ -1,0 +1,26 @@
+version: '3'
+
+services:
+  broker:
+    image: emqx/emqx:5.0.9
+    container_name: broker
+    ports:
+      - "18083:18083"
+      - "8083:8083"
+      - "1883:1883"
+
+  gateway:
+    image: python:3.9.15-slim-bullseye
+    container_name: client
+    working_dir: /source
+    volumes:
+      - ./main.py:/source/main.py
+      - ./requirements.txt:/source/requirements.txt
+    command: bash -c "
+        pip install --no-cache-dir -r requirements.txt && 
+        python main.py -u broker
+      "
+    ports:
+      - "80:80"
+    depends_on:
+      - broker
