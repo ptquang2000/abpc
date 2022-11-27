@@ -10,6 +10,7 @@ args = parser.parse_args()
 
 count = 0
 name = ''
+seq = -1
 current_time = round(time.time()*1000)
 last_time = current_time
 
@@ -20,12 +21,12 @@ def time_log():
     last_time = current_time
 
 def count_log():
-    global count
-    print(f"Node: {name} Quantity: {count: <2}")
+    global count, name, seq
+    print(f"Sequence: {seq}, Node: {name}, Quantity: {count: <2}.")
     print("\r\033[F\033[F\033[F\033[F")
 
 def uart():
-    global count, name
+    global count, name, seq
     import serial.tools.list_ports
     print("Received UART")
     baudrate = 115200 if args.baudrate is None else args.baudrate
@@ -33,38 +34,28 @@ def uart():
 
     ser = serial.Serial (com, baudrate)
     while True:
-        data = str(ser.readline())
         time_log()
-        while data[0] != '!':
-            data = data[1:]
-        temp = ''
-        key = ''
-        pointer = data[1:]
-        while pointer[0] != '#':
-            temp += pointer[0]
-            pointer = pointer[1:]
-            if pointer[0] == ':':
-                key = temp
-                temp = ''
-                pointer = pointer[1:]
-        if key == 'QUANTITY':
-            count = int(temp.strip())
-            count_log()
-        elif key == 'NODE':
-            name = temp.strip()
+        i_data = ser.readline()[:-1].decode('utf-8')
+        data = {val.split(':')[0] : val.split(':')[1] for val in i_data.split(';')}
+        count = int(data['QUANTITY'].strip())
+        name = data['NODE'].strip()
+        seq = int(data['SEQUENCE'].strip())
+        count_log()
+        ser.write(f'NODE:{name:<4};SEQUENCE:{seq ^ 1}'.encode())
 
 def wifi():
     from flask import Flask, request
     app = Flask(__name__)
     
-    @app.route('/')
+    @app.route('/', methods=['POST'])
     def index():
-        global count, name
-        name = request.args.get('NODE', type = str)
-        count = request.args.get('QUANTITY', type = int)
+        global count, name, seq
+        seq = request.values.get('SEQUENCE', type = int)
+        name = request.values.get('NODE', type = str)
+        count = request.values.get('QUANTITY', type = int)
         time_log()
         count_log()
-        return 'Received'
+        return f'NODE:{name};SEQUENCE:{seq ^ 1}'
 
     app.run(host="0.0.0.0", port=80)
 

@@ -5,12 +5,17 @@
 #include "esp_wifi_types.h"
 #include "esp_http_client.h"
 
-#define MAX_DATA_SIZE   256
+#define UART_RX_SIZE        20  // NODE:BUS1;SEQUENCE:1
+#define MAX_DATA_SIZE       1024 * 2
+#define MAX_BUFFER_SIZE     8
+#define TIMEOUT             1000 // ms
 
 static const char* TAG = "connector";
 static const char* NODE = STR(NODE_NAME);
-static char s_data[MAX_DATA_SIZE];
+static char s_quantity[MAX_DATA_SIZE];
+static int8_t s_ack;
 TaskHandle_t send_data_handle;
+TaskHandle_t arq_ack_handles[MAX_BUFFER_SIZE];
 
 /**
  * Init protocol function
@@ -28,10 +33,45 @@ void send_data_by_wifi();
 void send_data_by_bluetooth();
 void send_data_by_lora();
 
-void send_data_task(void* pvParameters) {
-    uint32_t ulTaskNotifiedValue;
-    while (1) {
-        if (xTaskNotifyWait((1<<0)|(1<<1), 0, &ulTaskNotifiedValue, portMAX_DELAY) == pdTRUE)
+/**
+ * ARQ
+*/
+typedef struct {
+    int8_t send_seq;
+    int8_t ack_seq;
+    int8_t index;
+    int8_t next;
+    char buffer[MAX_BUFFER_SIZE][MAX_DATA_SIZE];
+} StopAndWait;
+static StopAndWait arq;
+
+void arq_prepare() {
+    arq.ack_seq = arq.send_seq ^ (s_ack ^ arq.send_seq);
+    memcpy(arq.buffer[arq.next], s_quantity, strlen(s_quantity));
+    if (arq.send_seq == arq.ack_seq)
+    {
+        arq.next = arq.next == MAX_BUFFER_SIZE - 1 ? 0 : arq.next + 1;
+        arq.index = arq.next == arq.index ? arq.next + 1 : arq.index;
+        arq.index = arq.index == MAX_BUFFER_SIZE ? 0 : arq.index;
+    }
+    else
+    {
+        arq.send_seq = arq.ack_seq;
+        arq.index = arq.index == MAX_BUFFER_SIZE - 1 ? 0 : arq.index + 1;
+        arq.next = arq.next == MAX_BUFFER_SIZE - 1 ? 0 : arq.next + 1;
+    }
+    memcpy(s_quantity, arq.buffer[arq.index], strlen(arq.buffer[arq.index]));
+}
+
+void arq_ack_task() {
+    while (1) 
+    {
+        vTaskDelay(TIMEOUT / portTICK_PERIOD_MS);
+        if (arq.send_seq != arq.ack_seq)
+        {
+            vTaskDelete(arq_ack_handles[arq.index]);
+        }
+        else
         {
             switch (CONN_TYPE)
             {
@@ -45,8 +85,71 @@ void send_data_task(void* pvParameters) {
     }
 }
 
+void process_ack(char* data, int8_t data_len) {
+    char* tmp = malloc(data_len + 1);
+    memcpy(tmp, data, data_len);
+    memset(tmp + data_len, '\0', 1);
+    char* token = strtok(tmp, ";");
+    char* content[2];
+    for (int8_t i = 0; i < 2; i++)
+    {
+        content[i] = malloc(strlen(token));
+        memcpy(content[i], token, strlen(token) + 1);
+        memset(content[i] + strlen(token), '\0', 1);
+        token = strtok(NULL, ";");
+    }
+    bool valid = false;
+    for (int8_t i = 0; i < 2; i++)
+    {
+        token = strtok(content[i], ":");
+        if (strcmp(token, "NODE") == 0)
+        {
+            token = strtok(NULL, ":");
+            if (strcmp(NODE, token) == 0)
+            {
+                valid = true;
+            }
+        }
+        else if (strcmp(token, "SEQUENCE") == 0)
+        {
+            token = strtok(NULL, ":");
+            if (valid)
+            {
+                s_ack = token[0] - 48;
+            }
+        }
+        free(content[i]);
+    }
+    free(tmp);
+}
+
+void send_data_task(void* pvParameters) {
+    uint32_t ulTaskNotifiedValue;
+    while (1) {
+        if (xTaskNotifyWait((1<<0)|(1<<1), 0, &ulTaskNotifiedValue, portMAX_DELAY) == pdTRUE)
+        {
+            arq_prepare();
+            switch (CONN_TYPE)
+            {
+            case UART_MODE: send_data_by_uart(); break;
+            case WIFI_MODE: send_data_by_wifi(); break;
+            case BLUETOOTH_MODE: send_data_by_bluetooth(); break;
+            case LORA_MODE: send_data_by_lora(); break;
+            default: break;
+            xTaskCreate(&arq_ack_task, "arq_ack_task", 4096, NULL, tskIDLE_PRIORITY, arq_ack_handles[arq.index]);
+            }
+        }
+    }
+}
+
 void init_connector() {
     (void) TAG;
+    arq.send_seq = 0;
+    arq.ack_seq = arq.send_seq;
+    s_ack = arq.send_seq;
+    arq.index = 0;
+    arq.next = 0;
+
     switch (CONN_TYPE)
     {
     case UART_MODE: init_uart(); break;
@@ -59,12 +162,12 @@ void init_connector() {
 }
 
 void send_integer(int8_t i_value) {
-    sprintf(s_data, "%d", i_value);
+    sprintf(s_quantity, "%d", i_value);
     xTaskNotify(send_data_handle, (1<<1), eSetBits);
 }
 
 void send_data(char* i_data) {
-    memcpy(s_data, i_data, strlen(i_data));
+    memcpy(s_quantity, i_data, strlen(i_data));
     xTaskNotify(send_data_handle, (1<<0), eSetBits);
 }
 
@@ -72,9 +175,20 @@ void send_data(char* i_data) {
 
 QueueHandle_t uart_queue;
 
+void _uart_rx_handler(void* arg) {
+    uint8_t* data = (uint8_t*) malloc(UART_RX_SIZE+1);
+    while (1) {
+        const int rxBytes = uart_read_bytes(UART_NUM_2, data, UART_RX_SIZE, 1000 / portTICK_PERIOD_MS);
+        if (rxBytes > 0) {
+            data[rxBytes] = 0;
+            process_ack((char*) data, UART_RX_SIZE);
+        }
+    }
+    free(data);
+}
+
 void init_uart() {
-    const uint16_t bufferSize = (1024 * 2);
-    ESP_ERROR_CHECK(uart_driver_install(UART_NUM_2, bufferSize, bufferSize, 10, &uart_queue, 0));
+    ESP_ERROR_CHECK(uart_driver_install(UART_NUM_2, MAX_DATA_SIZE, MAX_DATA_SIZE, 10, &uart_queue, 0));
     uart_config_t uart_config = {
         .baud_rate = BAUDRATE,
         .data_bits = UART_DATA_8_BITS,
@@ -84,13 +198,12 @@ void init_uart() {
     };
     ESP_ERROR_CHECK(uart_param_config(UART_NUM_2, &uart_config));
     ESP_ERROR_CHECK(uart_set_pin(UART_NUM_2, TX_IO_NUM, RX_IO_NUM, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    xTaskCreate(&_uart_rx_handler, "uart_rx_handler", 1024*2, NULL, tskIDLE_PRIORITY, NULL);
 }
 
 void send_data_by_uart() {
-    char* cmd = malloc(strlen(NODE) + strlen(s_data) + 12);
-    sprintf(cmd, "!NODE:%s#\n", NODE);
-    uart_write_bytes(UART_NUM_2, cmd, strlen(cmd));
-    sprintf(cmd, "!QUANTITY:%s#\n", s_data);
+    char* cmd = malloc(strlen(NODE) + strlen(s_quantity) + 28);
+    sprintf(cmd, "SEQUENCE:%d;NODE:%s;QUANTITY:%s\n", arq.send_seq, NODE, s_quantity);
     uart_write_bytes(UART_NUM_2, cmd, strlen(cmd));
     free(cmd);
 }
@@ -125,8 +238,7 @@ void send_data_by_uart() {
 static EventGroupHandle_t s_wifi_event_group;
 static int s_retry_num = 0;
 
-static void event_handler(void* arg, esp_event_base_t event_base,
-                                int32_t event_id, void* event_data)
+static void event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
@@ -198,9 +310,8 @@ esp_err_t _http_event_handle(esp_http_client_event_t *evt)
         case HTTP_EVENT_ON_HEADER: break;
         case HTTP_EVENT_ON_DATA:
         {
-            // ESP_LOGI(TAG, "HTTP_EVENT_ON_DATA, len=%d", evt->data_len);
             if (!esp_http_client_is_chunked_response(evt->client)) {
-                // printf("%.*s", evt->data_len, (char*)evt->data);
+                process_ack(evt->data, evt->data_len);
             }
         }
         break;
@@ -211,17 +322,19 @@ esp_err_t _http_event_handle(esp_http_client_event_t *evt)
 }
 
 void send_data_by_wifi() {
-    char* url = malloc((sizeof SERVER_URL) + strlen(NODE) + strlen(s_data) + 16);
-    sprintf(url, "%s?NODE=%s&QUANTITY=%s", SERVER_URL, NODE, s_data);
+    char* post_data = malloc(strlen(NODE) + strlen(s_quantity) + 26);
+    sprintf(post_data, "NODE=%s&SEQUENCE=%d&QUANTITY=%s", NODE, arq.send_seq, s_quantity);
     esp_http_client_config_t config = {
-        .url = url,
+        .url = SERVER_URL,
         .event_handler = _http_event_handle,
         .port = PORT
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
+    esp_http_client_set_method(client, HTTP_METHOD_POST);
+    esp_http_client_set_post_field(client, post_data, strlen(post_data));
     esp_http_client_perform(client);
     esp_http_client_cleanup(client);
-    free(url);
+    free(post_data);
 }
 
 #else

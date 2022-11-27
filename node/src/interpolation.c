@@ -63,6 +63,7 @@ float cubicInterpolate(float p[], float x) {
 // p is a 16-point 4x4 array of the 2 rows & columns left/right/above/below
 float bicubicInterpolate(float p[], float x, float y) {
     float arr[4] = {0,0,0,0};
+    (void)arr;
     arr[0] = cubicInterpolate(p+0, x);
     arr[1] = cubicInterpolate(p+4, x);
     arr[2] = cubicInterpolate(p+8, x);
@@ -86,6 +87,7 @@ void get_adjacents_1d(float *src, float *dest, uint8_t rows, uint8_t cols, int8_
 void get_adjacents_2d(float *src, float *dest, uint8_t rows, uint8_t cols, int8_t x, int8_t y) {
     //Serial.print("("); Serial.print(x); Serial.print(", "); Serial.print(y); Serial.println(")");
     float arr[4];
+    (void)arr;
     for (int8_t delta_y = -1; delta_y < 3; delta_y++) { // -1, 0, 1, 2
         float *row = dest + 4 * (delta_y+1); // index into each chunk of 4
         for (int8_t delta_x = -1; delta_x < 3; delta_x++) { // -1, 0, 1, 2
