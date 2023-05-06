@@ -1,6 +1,7 @@
 #include "apc.h" 
 
 #include "stdint.h"
+#include "string.h"
 
 #include "ClassADevice.h"
 #include "LoraDevice.h"
@@ -12,8 +13,10 @@
 
 #include "driver/gpio.h"
 
-#define CFG_START_COUNT_BUTTON 16
-#define CFG_DISTANCE_THRESHOLD 1600 // mm
+#define CFG_START_COUNT_BUTTON  16
+#define CFG_DISTANCE_THRESHOLD  1600 // mm
+#define CFG_LORAWAN_FPORT       1
+#define CFG_USE_UNCONFIRMED_MSG 0
 
 
 const static char* TAG = "ABPC";
@@ -31,6 +34,8 @@ void btn_task(void *p)
     int btn_state = 0;
     int last_btn_state = btn_state;
     int count_state = 0;
+    uint8_t data[4];
+
     while (1)
     {
         btn_state = gpio_get_level(CFG_START_COUNT_BUTTON);
@@ -39,19 +44,25 @@ void btn_task(void *p)
            last_btn_state = btn_state;
            if (btn_state)
            {
-               ESP_LOGI(TAG, "Button pressed");
                count_state++;
                count_state = count_state % 2;
                if (count_state)
                {
                    ESP_LOGI(TAG, "Start counting");
+                   ClassADevice_suspend_tasks();
                    APC_start_count(CFG_DISTANCE_THRESHOLD);
                }
                else
                {
+                   ESP_LOGI(TAG, "Stop counting");
                    APC_stop_count();
-                   // ClassADevice_send_data_unconfirmed(data, sizeof(data), 10);
-                   // ClassADevice_send_data_confirmed(data, sizeof(data), 10);
+
+                   memcpy(data, &s_count, sizeof(int));
+#if CFG_USE_UNCONFIRMED_MSG
+                   ClassADevice_send_data_unconfirmed(data, sizeof(data), CFG_LORAWAN_FPORT);
+#else 
+                   ClassADevice_send_data_confirmed(data, sizeof(data), CFG_LORAWAN_FPORT);
+#endif /* CFG_USE_UNCONFIRMED_MSG */
                }
            }
         }
@@ -72,8 +83,8 @@ void app_main(void)
     LoraDevice* device = LoraDevice_create(app_key, join_eui, dev_eui, dev_nonce);
 
     ClassADevice_intialize(device);
-    // ClassADevice_register_event();
-    // ClassADevice_connect();
+    ClassADevice_register_event();
+    ClassADevice_connect();
 
     APC_create();
     APC_config conf = {
@@ -84,7 +95,7 @@ void app_main(void)
     };
     APC_initialize(&conf);
 
-    xTaskCreate(btn_task, "btn_task", 1024, NULL, tskIDLE_PRIORITY, &btn_task_handle);
+    xTaskCreate(btn_task, "btn_task", 1024, NULL, tskIDLE_PRIORITY + 1, &btn_task_handle);
     int last_count = 0;
     while (1)
     {

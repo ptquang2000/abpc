@@ -3,6 +3,7 @@ ESP8266_RTOS_SDK
 msys32
 xtensa-lx106-elf
 '
+.cache
 
 # Prerequisites
 *.d
