@@ -1,0 +1,9 @@
+[submodule "esp8266-apc"]
+	path = esp8266-apc
+	url = https://github.com/ptquang2000/esp8266-apc
+[submodule "esp8266-lorawan"]
+	path = esp8266-lorawan
+	url = https://github.com/ptquang2000/esp8266-lorawan
+[submodule "prj/components/sx1278"]
+	path = prj/components/sx1278
+	url = https://github.com/ptquang2000/esp-sx1278-driver
