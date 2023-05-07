@@ -72,20 +72,7 @@ void btn_task(void *p)
 
 void app_main(void)
 {
-    gpio_config_t io_conf;
-    io_conf.intr_type = GPIO_INTR_DISABLE;
-    io_conf.mode = GPIO_MODE_INPUT;
-    io_conf.pin_bit_mask = 1ULL << CFG_START_COUNT_BUTTON;
-    io_conf.pull_down_en = 0;
-    io_conf.pull_up_en = 0;
-    gpio_config(&io_conf);
-
-    LoraDevice* device = LoraDevice_create(app_key, join_eui, dev_eui, dev_nonce);
-
-    ClassADevice_intialize(device);
-    ClassADevice_register_event();
-    ClassADevice_connect();
-
+    ESP_LOGI(TAG, "Initializing counter device");
     APC_create();
     APC_config conf = {
         .roi_x = 8,
@@ -95,7 +82,24 @@ void app_main(void)
     };
     APC_initialize(&conf);
 
+    ESP_LOGI(TAG, "Initializing lorawan end device");
+    LoraDevice* device = LoraDevice_create(app_key, join_eui, dev_eui, dev_nonce);
+    ClassADevice_intialize(device);
+    ClassADevice_register_event();
+    ClassADevice_connect();
+    ClassADevice_wait_connect();
+
+    ESP_LOGI(TAG, "Initializing button");
+    gpio_config_t io_conf;
+    io_conf.intr_type = GPIO_INTR_DISABLE;
+    io_conf.mode = GPIO_MODE_INPUT;
+    io_conf.pin_bit_mask = 1ULL << CFG_START_COUNT_BUTTON;
+    io_conf.pull_down_en = 0;
+    io_conf.pull_up_en = 0;
+    gpio_config(&io_conf);
     xTaskCreate(btn_task, "btn_task", 1024, NULL, tskIDLE_PRIORITY + 1, &btn_task_handle);
+
+    ESP_LOGI(TAG, "Enter main loop:");
     int last_count = 0;
     while (1)
     {
